@@ -1,2 +1,2 @@
-# better-create-snapshot
+# BTRSNAP
 Bash script to automate btrfs snapshots
