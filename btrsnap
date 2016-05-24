@@ -4,9 +4,13 @@
 # All btrfs partitions to snapshot need a filesystem label like "HOME".
 # If /home is a separate volume on "ROOT" filesystem, specify "ROOT" as the
 # HOME_LABEL and the subvol-name of /home for HOME_SUBVOL. Same for /boot.
-# This script will create a snapshot called snap_of_<subvol>_<date> where
-# <subvol> is the btrfs subvolume that is snapped and  <date> is the output 
-# of `date +%Y%m%e%H%M%S` at script runtime.
+# This script will create a snapshot called 
+# [<snapname-prefix>_]snap_of_<subvol>_<date> where <subvol> is the btrfs 
+# subvolume that is snapped, <date> is the output of `date +%Y%m%e%H%M%S`
+# at script runtime and <snapname-prefix> is an optional parameter of the 
+# script.
+# 
+# Usage: btrsnap [snapname-prefix]
 
 ## User changable area
 BTRFS_WORKDIR="/root/mnt_btrfs"
@@ -27,6 +31,7 @@ BTRFS_LINUX_BOOT_KEEP_COUNT="10"
 ## Script acea - do not change, except you know what you're doing!
 DATE=$(date +%Y%m%d%H%M%S)
 START_WD=$(pwd)
+BTRFS_SNAP_PREFIX="${1}_"
 
 if [[ "$BTRFS_READONLY_SNAPSHOTS" =~ ^([yY][eE][sS]|[yY])$ ]]
 then 
@@ -62,8 +67,8 @@ function do_snapshot {
       mount -o subvol=/ /dev/disk/by-label/${FSLABEL} ${WORKDIR}/${FSLABEL} || (echo "ERROR: mount of ${WORKDIR}/${FSLABEL} failed!" 1>&2 && exit 1)
   fi
   cd ${WORKDIR}/${FSLABEL}
-  echo "INFO: creating btrfs subvol snap_of_${SUBVOL}_${DATE} ... "
-  $btrfs subvolume snapshot ${BTRFS_READONLY} ${SUBVOL} snap_of_${SUBVOL}_${DATE} | sed -r "s/^/INFO: /"
+  echo "INFO: creating btrfs subvol ${BTRFS_SNAP_PREFIX}snap_of_${SUBVOL}_${DATE} ... "
+  $btrfs subvolume snapshot ${BTRFS_READONLY} ${SUBVOL} ${BTRFS_SNAP_PREFIX}snap_of_${SUBVOL}_${DATE} | sed -r "s/^/INFO: /"
   echo "INFO: waiting for btrfs to complete write snapshot ... "
   cd ${START_WD}
   /usr/bin/env sync
@@ -119,13 +124,13 @@ function cleanup_snapshots {
   fi
   cd ${WORKDIR}/${FSLABEL}
 
-  if [ "${KEEP_COUNT}" -lt "$(ls | grep -P "^snap_of_${SUBVOL}_[0-9]{14}$" | wc -l)" ]
+  if [ "${KEEP_COUNT}" -lt "$(ls | grep -P "^${BTRFS_SNAP_PREFIX}snap_of_${SUBVOL}_[0-9]{14}$" | wc -l)" ]
   then
-    count=$(($(ls | grep -P "^snap_of_${SUBVOL}_[0-9]{14}$" | wc -l)-${KEEP_COUNT}))
+    count=$(($(ls | grep -P "^${BTRFS_SNAP_PREFIX}snap_of_${SUBVOL}_[0-9]{14}$" | wc -l)-${KEEP_COUNT}))
     echo "INFO: found ${count} old snapshots on ${FSLABEL}."
-    for snap in $(ls | sort | grep -P "^snap_of_${SUBVOL}_[0-9]{14}$"| head -n ${count}); do
+    for snap in $(ls | sort | grep -P "^${BTRFS_SNAP_PREFIX}snap_of_${SUBVOL}_[0-9]{14}$"| head -n ${count}); do
       echo "INFO: deleting snapshot ${snap} on ${FSLABEL}"
-      $btrfs subvolume delete ${snap} | sed -r "s/^/INFO: /"
+      $btrfs subvolume delete -c ${snap} | sed -r "s/^/INFO: /"
     done
   else 
     echo "INFO: no more than ${KEEP_COUNT} old snapshots on ${FSLABEL}, not deleting anything"
