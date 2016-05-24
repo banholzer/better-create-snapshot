@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # How to use:
 # specify a script working directory e.g. /root/mnt_btrfs
 # All btrfs partitions to snapshot need a filesystem label like "HOME".
@@ -10,7 +10,8 @@
 
 ## User changable area
 BTRFS_WORKDIR="/root/mnt_btrfs"
-BTRFS_LINUX_ROOT_LABEL="ROOT"
+BTRFS_READONLY_SNAPSHOTS="yes" # yes,Yes,YES,y,Y... 
+BTRFS_LINUX_ROOT_LABEL="ROOT_CRYPT"
 BTRFS_LINUX_ROOT_SUBVOL="@"
 BTRFS_LINUX_ROOT_KEEP_COUNT="10"
 
@@ -27,10 +28,18 @@ BTRFS_LINUX_BOOT_KEEP_COUNT="10"
 DATE=$(date +%Y%m%d%H%M%S)
 START_WD=$(pwd)
 
+if [[ "$BTRFS_READONLY_SNAPSHOTS" =~ ^([yY][eE][sS]|[yY])$ ]]
+then 
+  BTRFS_READONLY=" -r "
+else
+  BTRFS_READONLY=""
+fi
+btrfs="/usr/bin/env btrfs"
+
 # normalize btrfs mount directory to no trailing slash
 BTRFS_WORKDIR=$(echo ${BTRFS_WORKDIR} | sed -r "s/\/$//")
 
-function do_snapshot {
+function do_snapshot { 
   WORKDIR=$1
   FSLABEL=$2
   SUBVOL=$3
@@ -38,28 +47,42 @@ function do_snapshot {
   if [ ! -d "${WORKDIR}" ]
     then
       echo "INFO: btrfs workdir ${WORKDIR} doesn't exist - creating"
-      mkdir ${WORKDIR} || echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1
+      mkdir ${WORKDIR} || (echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1)
   fi
   if [ ! -d "${WORKDIR}/${FSLABEL}" ]
     then
       echo "INFO: mountpoint ${WORKDIR}/${FSLABEL} doesn't exist - creating"
-      mkdir ${WORKDIR}/${FSLABEL} || echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1
+      mkdir ${WORKDIR}/${FSLABEL} || (echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1)
   fi
   if mount | grep -q ${WORKDIR}/${FSLABEL}
     then 
       echo "INFO: btrfs subvol=/ already mounted to ${WORKDIR}/${FSLABEL}"
     else
       echo "INFO: mounting btrfs subvol=/ to ${WORKDIR}"
-      mount -o subvol=/ /dev/disk/by-label/${FSLABEL} ${WORKDIR}/${FSLABEL} || echo "ERROR: mount of ${WORKDIR}/${FSLABEL} failed!" 1>&2 && exit 1
+      mount -o subvol=/ /dev/disk/by-label/${FSLABEL} ${WORKDIR}/${FSLABEL} || (echo "ERROR: mount of ${WORKDIR}/${FSLABEL} failed!" 1>&2 && exit 1)
   fi
   cd ${WORKDIR}/${FSLABEL}
-  echo "INFO: creating btrfs subvol snap_of${SUBVOL}_${DATE} ... "
-  /usr/bin/btrfs subvolume snapshot ${SUBVOL} snap_of_${SUBVOL}_${DATE}
+  echo "INFO: creating btrfs subvol snap_of_${SUBVOL}_${DATE} ... "
+  $btrfs subvolume snapshot ${BTRFS_READONLY} ${SUBVOL} snap_of_${SUBVOL}_${DATE} | sed -r "s/^/INFO: /"
+  echo "INFO: waiting for btrfs to complete write snapshot ... "
+  cd ${START_WD}
+  /usr/bin/env sync
+  if [ -x $(which lsof) ]
+  then 
+    while $(/usr/bin/env lsof | grep -q ${WORKDIR}/${FSLABEL}) 
+    do
+      sleep .5
+    done
+  else 
+    echo "WARNING: no lsof found. Defaulting to timeout of 5 seconds. This could lead to racing conditions. Consider installing lsof!" 1>&2
+    sleep 5
+  fi
+
   if mount | grep -q ${WORKDIR}/${FSLABEL}
     then 
       echo "INFO: umounting ${WORKDIR}/${FSLABEL}"
-      umount ${WORKDIR}/${FSLABEL} || echo "ERROR: umount of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1
-      rmdir ${WORKDIR}/${FSLABEL} || echo "ERROR: rmdir of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1
+      umount ${WORKDIR}/${FSLABEL} || (echo "ERROR: umount of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1)
+      rmdir ${WORKDIR}/${FSLABEL} || (echo "ERROR: rmdir of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1)
     else
       echo "ERROR: ${WORKDIR}/${FSLABEL} was not mounted propperly!" 1>&2 && exit 1
   fi
@@ -80,35 +103,46 @@ function cleanup_snapshots {
   if [ ! -d "${WORKDIR}" ]
     then
       echo "INFO: btrfs workdir ${WORKDIR} doesn't exist - creating"
-      mkdir ${WORKDIR} || echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1
+      mkdir ${WORKDIR} || (echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1)
   fi
   if [ ! -d "${WORKDIR}/${FSLABEL}" ]
     then
       echo "INFO: mountpoint ${WORKDIR}/${FSLABEL} doesn't exist - creating"
-      mkdir ${WORKDIR}/${FSLABEL} || echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1
+      mkdir ${WORKDIR}/${FSLABEL} || (echo "ERROR: creation of ${WORKDIR} failed!" 1>&2 && exit 1)
   fi
   if mount | grep -q ${WORKDIR}/${FSLABEL}
     then 
       echo "INFO: btrfs subvol=/ already mounted to ${WORKDIR}/${FSLABEL}"
     else
       echo "INFO: mounting btrfs subvol=/ to ${WORKDIR}"
-      mount -o subvol=/ /dev/disk/by-label/${FSLABEL} ${WORKDIR}/${FSLABEL} || echo "ERROR: mount of ${WORKDIR}/${FSLABEL} failed!" 1>&2 && exit 1
+      mount -o subvol=/ /dev/disk/by-label/${FSLABEL} ${WORKDIR}/${FSLABEL} || (echo "ERROR: mount of ${WORKDIR}/${FSLABEL} failed!" 1>&2 && exit 1)
   fi
   cd ${WORKDIR}/${FSLABEL}
-  if [ ${keep_count} -lt $(ls snap_of_${SUBVOL}_* | wc -l) ]
+
+  if [ "${KEEP_COUNT}" -lt "$(ls | grep -P "^snap_of_${SUBVOL}_[0-9]{14}$" | wc -l)" ]
   then
-    count=$(($(ls snap_of_${SUBVOL}_* | wc -l)-${keep_count}))
-    echo "INFO: found ${count} old snapshots."
-    for snap in $(ls | sort | head -n ${count}); do
-      echo "INFO: deleting snapshot ${snap}"
-      btrfs subvolume delete ${snap} 
+    count=$(($(ls | grep -P "^snap_of_${SUBVOL}_[0-9]{14}$" | wc -l)-${KEEP_COUNT}))
+    echo "INFO: found ${count} old snapshots on ${FSLABEL}."
+    for snap in $(ls | sort | grep -P "^snap_of_${SUBVOL}_[0-9]{14}$"| head -n ${count}); do
+      echo "INFO: deleting snapshot ${snap} on ${FSLABEL}"
+      $btrfs subvolume delete ${snap} | sed -r "s/^/INFO: /"
     done
+  else 
+    echo "INFO: no more than ${KEEP_COUNT} old snapshots on ${FSLABEL}, not deleting anything"
   fi
+  echo "INFO: waiting for btrfs to complete write operations on ${FSLABEL} ... "
+  cd ${START_WD}
+  /usr/bin/env sync
+  while $(/usr/bin/env lsof | grep -q ${WORKDIR}/${FSLABEL}) 
+  do
+    sleep .5
+  done
+
   if mount | grep -q ${WORKDIR}/${FSLABEL}
     then 
       echo "INFO: umounting ${WORKDIR}/${FSLABEL}"
-      umount ${WORKDIR}/${FSLABEL} || echo "ERROR: umount of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1
-      rmdir ${WORKDIR}/${FSLABEL} || echo "ERROR: rmdir of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1
+      umount ${WORKDIR}/${FSLABEL} || (echo "ERROR: umount of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1)
+      rmdir ${WORKDIR}/${FSLABEL} || (echo "ERROR: rmdir of ${WORKDIR}/${FSLABEL} failed" 1>&2 && exit 1)
     else
       echo "ERROR: ${WORKDIR}/${FSLABEL} was not mounted propperly!" 1>&2 && exit 1
   fi
@@ -123,13 +157,13 @@ cleanup_snapshots ${BTRFS_WORKDIR} ${BTRFS_LINUX_ROOT_LABEL} ${BTRFS_LINUX_ROOT_
 if mount | grep "btrfs" | grep -q "/home" 
 then
   do_snapshot ${BTRFS_WORKDIR} ${BTRFS_LINUX_HOME_LABEL} ${BTRFS_LINUX_HOME_SUBVOL}
-  cleanup_snapshots ${BTRFS_WORKDIR} ${BTRFS_LINUX_ROOT_LABEL} ${BTRFS_LINUX_ROOT_SUBVOL} ${BTRFS_LINUX_ROOT_KEEP_COUNT}
+  cleanup_snapshots ${BTRFS_WORKDIR} ${BTRFS_LINUX_HOME_LABEL} ${BTRFS_LINUX_HOME_SUBVOL} ${BTRFS_LINUX_HOME_KEEP_COUNT}
 fi
 # Is boot separately mounted, then do snap of BOOT
 if mount | grep "btrfs" | grep -q "/boot" 
 then
   do_snapshot ${BTRFS_WORKDIR} ${BTRFS_LINUX_BOOT_LABEL} ${BTRFS_LINUX_BOOT_SUBVOL}
-  cleanup_snapshots ${BTRFS_WORKDIR} ${BTRFS_LINUX_ROOT_LABEL} ${BTRFS_LINUX_ROOT_SUBVOL} ${BTRFS_LINUX_ROOT_KEEP_COUNT}
+  cleanup_snapshots ${BTRFS_WORKDIR} ${BTRFS_LINUX_BOOT_LABEL} ${BTRFS_LINUX_BOOT_SUBVOL} ${BTRFS_LINUX_BOOT_KEEP_COUNT}
 fi
 
 
