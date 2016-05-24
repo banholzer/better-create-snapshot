@@ -1,2 +1,2 @@
-DPkg::Pre-Invoke {"/opt/btrsnap/btrsnap pre_apt";};
-DPkg::Post-Invoke {"/opt/btrsnap/btrsnap post_apt";};
+DPkg::Pre-Invoke {"/opt/btrsnappr/btrsnappr pre_apt";};
+DPkg::Post-Invoke {"/opt/btrsnappr/btrsnappr post_apt";};
