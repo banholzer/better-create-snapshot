@@ -31,7 +31,9 @@ BTRFS_LINUX_BOOT_KEEP_COUNT="10"
 ## Script acea - do not change, except you know what you're doing!
 DATE=$(date +%Y%m%d%H%M%S)
 START_WD=$(pwd)
-BTRFS_SNAP_PREFIX="${1}_"
+
+# Add prefix and _ if $1 is set.
+if [ -n "${1}" ]; then BTRFS_SNAP_PREFIX="${1}_" ; fi 
 
 if [[ "$BTRFS_READONLY_SNAPSHOTS" =~ ^([yY][eE][sS]|[yY])$ ]]
 then 
